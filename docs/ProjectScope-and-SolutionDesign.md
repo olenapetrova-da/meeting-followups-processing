@@ -1,4 +1,5 @@
-# Baseline: Event-driven meeting recording → minutes email (Drive push → n8n → Make) + Notion register
+# Project Scope and Solution Design baseline
+Baseline: Event-driven meeting recording → minutes email (Drive push → n8n → Make) + Notion register
 
 ## 0) Context
 
