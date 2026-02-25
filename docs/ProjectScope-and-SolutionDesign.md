@@ -138,6 +138,10 @@ Reference workflow export: `WF-DRIVE-PUSH_intake.json`.
 
 ---
 
+
+
+**Repo hygiene note**
+- The n8n export file (`integrations/n8n/WF-DRIVE-PUSH_intake.json`) currently contains a literal value for `N8N_SHARED_SECRET` inside an IF node. Replace it with a placeholder before committing.
 ## 7) Acceptance criteria (E tests)
 
 1) Upload a new file into the intake folder → **exactly 1** n8n execution starts.
