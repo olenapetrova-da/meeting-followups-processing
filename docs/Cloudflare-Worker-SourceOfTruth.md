@@ -6,7 +6,7 @@ Cloudflare UI is not your source-of-truth. GitHub is.
 
 1) Worker source code
 - Copy the deployed Worker code from Cloudflare → Workers & Pages → pmi-drive-watch → Edit code
-- Paste it into: `cloudflare/worker/index.js`
+- Paste it into: `cloudflare/worker/pmi-drive-watch.js`
 
 2) Config snapshot
 - Commit: `docs/Cloudflare-Config-Snapshot.md`
