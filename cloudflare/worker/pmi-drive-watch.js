@@ -4,6 +4,7 @@
  * Endpoints:
  *  - POST /drive/push  : where Google Drive push pings will be sent
  *  - POST /drive/setup : a manual endpoint you call once to create/renew the watch
+ *  - GET  /drive/status: read-only status (debug; no secrets) // CHANGED
  *
  * KV:
  *  - one key (env.STATE_KEY) holding JSON state
@@ -26,7 +27,7 @@ const MAX_CHANGE_PAGES = 10;
 const PAGE_SIZE = 100;
 
 // "New file" heuristic: change time close to created time ⇒ likely creation/upload, not a move.
-const NEW_FILE_MAX_LAG_MS = 5 * 60 * 1000; // 5 min
+const NEW_FILE_MAX_LAG_MS = 5 * 60 * 1000; // 5 min (NOTE: currently unused; heuristic disabled below) // CHANGED
 
 // Dedupe window for emitted fileIds (Worker-side)
 const EMIT_DEDUPE_TTL_MS = 48 * 60 * 60 * 1000; // 48h
@@ -36,7 +37,7 @@ const EMIT_DEDUPE_MAX_KEYS = 200;
 const IN_FLIGHT_WINDOW_MS = 30 * 1000;
 
 // Renewal threshold
-const RENEW_IF_EXPIRES_WITHIN_MS = 24 * 60 * 60 * 1000; // 24h
+const RENEW_IF_EXPIRES_WITHIN_MS = 60 * 60 * 1000; // 20 min // CHANGED: avoid thrashing with frequent Cron; renew only shortly before expiry
 
 export default {
   async fetch(request, env, ctx) {
@@ -57,7 +58,16 @@ export default {
         return json(res, 200);
       }
 
-      return json({ ok: true, name: "pmi-drive-watch", endpoints: ["/drive/setup", "/drive/push"] }, 200);
+      if (path === "/drive/status") {
+        // CHANGED: simple read-only status endpoint (no secrets)
+        const s = await getState(env);
+        if (!s) return json({ ok: true, state: null }, 200);
+        const { folderId, pushUrl, pageToken, channelId, resourceId, expirationMs, lastMessageNumber, lastMaxChangeTimeMs, lastRenewAtMs, lastRenewError } = s;
+        const recentEmittedCount = s.recentEmitted ? Object.keys(s.recentEmitted).length : 0;
+        return json({ ok: true, state: { folderId, pushUrl, pageToken, channelId, resourceId, expirationMs, lastMessageNumber, lastMaxChangeTimeMs, lastRenewAtMs, lastRenewError, recentEmittedCount } }, 200);
+      }
+
+      return json({ ok: true, name: "pmi-drive-watch", endpoints: ["/drive/setup", "/drive/push", "/drive/status"] }, 200);
     } catch (e) {
       return json({ error: "worker_error", details: String(e?.message ?? e) }, 500);
     }
@@ -179,7 +189,7 @@ async function setupOrRenewWatch(env, pushUrl, { forceRenew }) {
   let pageToken = state.pageToken;
   if (!pageToken) {
     const sp = await driveFetch(env, accessToken, "/changes/startPageToken", {
-      query: { restrictToMyDrive: "true", fields: "startPageToken" },
+      query: { fields: "startPageToken" }, // CHANGED: removed restrictToMyDrive (can hide changes for some personal/shared setups)
     });
     pageToken = sp.startPageToken;
   }
@@ -190,7 +200,7 @@ async function setupOrRenewWatch(env, pushUrl, { forceRenew }) {
     method: "POST",
     query: {
       pageToken,
-      restrictToMyDrive: "true",
+      // CHANGED: removed restrictToMyDrive (can hide changes for some personal/shared setups)
       // NOTE: address in body below
     },
     body: {
@@ -212,7 +222,9 @@ async function setupOrRenewWatch(env, pushUrl, { forceRenew }) {
     resourceId: watchRes.resourceId,
     channelToken,
     expirationMs,
-    lastMessageNumber: state.lastMessageNumber || null,
+    lastRenewAtMs: Date.now(), // CHANGED: for debugging
+    lastRenewError: null,
+    lastMessageNumber: null, // CHANGED: reset on (re)watch to avoid duplicate_message_number lock when channel changes
     lastMaxChangeTimeMs: state.lastMaxChangeTimeMs || null,
     recentEmitted: pruneRecentEmitted(state.recentEmitted || {}),
     inFlightUntilMs: 0,
@@ -289,7 +301,7 @@ async function handleDrivePush(request, env, ctx) {
       query: {
         pageToken,
         pageSize: String(PAGE_SIZE),
-        restrictToMyDrive: "true",
+        // CHANGED: removed restrictToMyDrive (can hide changes for some personal/shared setups)
         includeRemoved: "false",
         spaces: "drive",
         fields,
@@ -313,10 +325,14 @@ async function handleDrivePush(request, env, ctx) {
 
       if (changeTimeMs > maxChangeTimeMs) maxChangeTimeMs = changeTimeMs;
 
-      // "Real new file" filter (creation/upload-ish, not move)
-      if (!createdTimeMs || !changeTimeMs) continue;
-      const lag = changeTimeMs - createdTimeMs;
-      if (lag < 0 || lag > NEW_FILE_MAX_LAG_MS) continue;
+      // CHANGED: disabled the "new file" time-lag heuristic.
+      // Reason: Drive `change time` vs `createdTime` is not reliable enough for intake,
+      // and can filter out real uploads (moves/slow uploads). Folder membership + idempotency is enough.
+      //
+      // Previous logic (kept here for reference):
+      // if (!createdTimeMs || !changeTimeMs) continue;
+      // const lag = changeTimeMs - createdTimeMs;
+      // if (lag < 0 || lag > NEW_FILE_MAX_LAG_MS) continue;
 
       const fileId = f.id || ch.fileId;
       if (!fileId) continue;
@@ -394,7 +410,17 @@ async function renewIfNeeded(env) {
   const exp = state.expirationMs ? Number(state.expirationMs) : null;
   if (!exp) return;
 
-  if (nowMs() > exp - RENEW_IF_EXPIRES_WITHIN_MS) {
+  // Renew only when close to expiry (see constant above)
+  if (nowMs() <= exp - RENEW_IF_EXPIRES_WITHIN_MS) return;
+
+  try {
     await setupOrRenewWatch(env, state.pushUrl, { forceRenew: true });
+  } catch (e) {
+    // CHANGED: persist error so it's visible in KV snapshot
+    const s2 = (await getState(env)) || state || {};
+    s2.lastRenewError = String(e?.message ?? e);
+    s2.lastRenewAtMs = Date.now();
+    await putState(env, s2);
+    throw e;
   }
 }
