@@ -1,41 +1,64 @@
-# Project Scope and Solution Design (S1 baseline, implemented)
-Baseline name: Event-driven meeting recording → minutes email (Drive push → **Worker + KV gate** → n8n → Make → Notion)
+# Project Scope and Solution Design (updated)
+Baseline name: Event-driven meeting recording → minutes email (Drive push → **Worker gate** → n8n → Make) + Notion register
 
-This document replaces the earlier baseline where Google Drive push notifications called **n8n directly** (or where n8n used Schedule Trigger). The design goal is strict: **n8n runs only when a real new file in the target Drive folder is confirmed**.
-
----
-
-## 0) Current status (as of 2026-02-25)
-
-**Phase 1 (Concept/Plan): DONE**
-- Minimal architecture agreed
-- Risks + acceptance criteria defined
-- Worker → n8n data contract defined
-
-**Phase 2 (Implementation): IN PROGRESS**
-- A) Google Cloud: DONE (Drive API enabled; OAuth client + refresh token available)
-- B) Cloudflare: DONE (Worker deployed; KV bound; variables/secrets set; Cron configured; watch initialized)
-- C) n8n: DONE (webhook-only workflow; auth header check; Notion idempotency)
-- D) Drive watch initialization: DONE (`POST /drive/setup` succeeded; KV state created)
-- E) Acceptance tests: BLOCKED (n8n execution quota exhausted; planned resume on **2026-03-01**)
+This document replaces the earlier baseline where Google Drive push notifications called **n8n directly**. The reason for the change is operational: on n8n **Starter** (2500 executions/month), any Drive push “noise” (and/or duplicated watch channels) can burn the quota even if the workflow exits early. The new design guarantees: **n8n runs only when a real new file in the target folder is confirmed**.
 
 ---
 
-## 1) Fixed inputs (this environment)
+## 0) Context
 
-- **Drive intake folderId**: `1tBji5XdYzKyXrTfhenNkmYPdmlQ2M6Jq`
-- **Worker base URL**: `https://pmi-drive-watch.elenipster.workers.dev`
-- **Worker endpoints**
-  - `POST /drive/push` — where Google Drive push pings will be sent
-  - `POST /drive/setup` — a manual endpoint you call once to create/renew the watch
-- **n8n Production webhook URL**: `https://olenap.app.n8n.cloud/webhook/f20c33d1-0166-4d04-919b-e541bbac2430`
+PMI course exercise: convert a meeting **recording** into a **meeting minutes email** using a realistic workflow.
+
+**Hard constraint (this project):**
+- **No n8n executions “just to check”.**
+- n8n should execute **only** when a **new file appears in the specified Drive folder**.
+
+**Chosen stack**
+- **Google Drive (personal / My Drive)** — recording storage (“document library” analogue)
+- **Google Drive Push Notifications + Changes API** — event trigger (push pings + delta fetch)
+- **Cloudflare Worker (Free) + KV (Free)** — **filter gate + state** (pageToken + channel data), so n8n is called only on true events
+- **n8n (Starter)** — backend worker for transcription/orchestration (runs only on true events)
+- **Make (Free)** — minutes formatting + email drafting/sending
+- **Notion (Free)** — register/dashboard (“SharePoint List analogue”). Write-only in automation chain.
+
+---
+
+## Glossary (on-demand)
+
+- **Watch channel**: a subscription that tells Google where to send push pings (expires; must be renewed).
+- **pageToken**: a cursor used by Drive `changes.list` to fetch “what changed since last time”.
+- **KV**: Cloudflare built-in key/value storage (we store one JSON blob with watch + pageToken state).
+
+---
+
+## 1) Goal and scope
+
+### Goal
+When a new recording file appears in a specific Drive folder:
+1) create/update a Notion “Meeting Register” entry
+2) transcribe the recording (OpenAI STT)
+3) generate meeting minutes (Google Doc)
+4) generate a minutes email (Gmail draft or send)
+5) keep an audit trail of statuses + links in Notion
+
+### In scope
+- Event-driven detection of new files in a Drive folder (no folder polling in n8n)
+- Worker-side filtering to guarantee n8n runs only on true events
+- Transcription + minutes generation + email drafting
+- Basic operational safety: idempotency, retries, error status, traceability
+- Artifact storage strategy (Drive / Notion / GitHub)
+
+### Out of scope (for the exercise)
+- Enterprise compliance controls (DLP, legal holds, tenant governance)
+- Advanced diarization accuracy guarantees
+- Full SharePoint/Graph implementation
 
 ---
 
 ## 2) Architecture (text diagram)
 
 ```
-[User drops file into Drive intake folder]
+[User drops file into Drive folder]
             |
             v
 (Drive Push Notification: changes.watch ping)
@@ -44,116 +67,220 @@ This document replaces the earlier baseline where Google Drive push notification
 +---------------------------------------------+
 | Cloudflare Worker (gate)                    |
 | - receives push pings (cheap, not n8n)      |
-| - reads KV state (pageToken + watch state)  |
+| - reads KV state (pageToken, channel data)  |
 | - calls Drive changes.list since pageToken  |
-| - filters to "new file in folderId"         |
-| - if match: POST to n8n Production webhook  |
+| - filters: new file IN target folder        |
+| - if match: POST to n8n webhook             |
 | - updates KV pageToken + dedupe cache       |
-| - renews watch via Cron (no n8n)            |
 +---------------------------------------------+
             |
             v
-        [n8n Webhook workflow]
+        [n8n Webhook: /new-intake-file]
             |
             v
-   (auth check → Notion idempotency → Make/Notion pipeline)
+  +-------------------------------------------+
+  | n8n: backend worker (runs only on events) |
+  | - idempotency check (Notion by file_id)   |
+  | - download file from Drive                |
+  | - OpenAI transcription                    |
+  | - save transcript doc (Drive)             |
+  | - update Notion status/links              |
+  +-------------------------------------------+
+            |
+            v
+     (HTTP POST to Make webhook)
+            |
+            v
+  +-------------------------------------------+
+  | Make: minutes + email                     |
+  | - generate minutes text                   |
+  | - create minutes Google Doc               |
+  | - create Gmail draft / send               |
+  | - update Notion status/links              |
+  +-------------------------------------------+
 ```
 
 ---
 
-## 3) What “new file in folder” means in this demo
+## 3) Trigger strategy (Drive push + Changes API + Worker gate)
 
-Worker filters changes to items where:
-- `file.parents` contains the intake `folderId`
-- `file.trashed` is false
-- and the event looks like a creation/upload (implementation uses a **createdTime vs change time** “near-equal” heuristic)
+### Why not n8n direct push
+Drive push does **not** send “new file payload”. It sends “something changed” pings.
+If n8n is the webhook target, **every ping is an n8n execution** (even if later filtered). This violates the project constraint.
 
-This is demo-grade reliability (good enough for the exercise, not a compliance-grade ingest).
+### How Drive push works (actual mechanics)
+1) Worker creates a **watch channel** using `changes.watch`.
+2) Google sends push pings to Worker when “something changed”.
+3) Worker calls `changes.list` using stored **pageToken** to get actual deltas.
+4) Worker filters deltas for “new file in target folder”.
+5) Worker calls n8n **only** when a real match exists.
 
----
+### Folder filter rule (demo-safe)
+A change is eligible when:
+- item is a file (not trashed)
+- file `parents` contains the target `folderId`
+- event indicates appearance in folder (created or moved into folder)
 
-## 4) Cloudflare state (what exists, where it lives)
-
-### 4.1 KV state (single key)
-KV key: `drive_watch_state` (value is a JSON blob, updated by Worker)
-
-State includes (at minimum):
-- `pageToken` (Drive changes cursor)
-- `channelId`, `resourceId`, `expirationMs` (watch channel)
-- `recentEmitted` (dedupe map: fileId → timestamp)
-- other operational fields (`pushUrl`, `lastMessageNumber`, etc.)
-
-### 4.2 Worker configuration (must be recreated manually if you lose it)
-- KV binding name: `KV`
-- Variables (Text): `INTAKE_FOLDER_ID`, `N8N_WEBHOOK_URL`, `STATE_KEY`
-- Secrets: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `N8N_SHARED_SECRET`
-- Cron schedule: daily (exact cron expression is stored in Cloudflare UI)
+Note: Drive changes can be noisy (renames, metadata, unrelated folder changes). Worker absorbs that noise; n8n does not.
 
 ---
 
-## 5) Data contract: Worker → n8n
+## 4) State and renewal strategy (moved out of n8n)
 
-**Request**
-- Method: `POST`
-- URL: n8n production webhook (above)
-- Headers:
-  - `Content-Type: application/json`
-  - `X-Worker-Token: <N8N_SHARED_SECRET>`
-  - `X-Intake-Event: drive.new_file_in_folder.v1`
+### State you must persist (minimum)
+Persist a single KV record (one key, e.g. `drive_watch_state`) with:
+- `folderId`
+- `pageToken` (cursor for `changes.list`)
+- `channelId`
+- `resourceId`
+- `expiration` timestamp (ms)
+- dedupe cache (small list/set of recently-emitted fileIds; optional but recommended)
 
-**Body (JSON)**
-```json
-{
-  "fileId": "string",
-  "name": "string|null",
-  "mimeType": "string|null",
-  "webViewLink": "string|null",
-  "createdTime": "RFC3339 string|null",
-  "folderId": "string",
-  "dedupeKey": "drive:file:<fileId>",
-  "watch": {
-    "channelId": "string",
-    "resourceId": "string",
-    "messageNumber": "string|null"
-  },
-  "emittedAt": "RFC3339 string"
-}
-```
+### Renewal (unavoidable; still “no polling in n8n”)
+Watch channels expire. Renewal is handled by **Worker Cron Trigger**, not n8n.
+
+Renew logic (daily Cron is enough for demo):
+- If `expiration` is within threshold (e.g., 48h), renew:
+  - stop old channel (optional but cleaner)
+  - create new `changes.watch`
+  - update KV with new `channelId/resourceId/expiration`
+
+### Resync strategy (when state is lost)
+If pageToken is missing/invalid:
+- call `changes.getStartPageToken`
+- store it as the new baseline
+- accept that you may miss changes between loss and reset (documented limitation)
 
 ---
 
-## 6) n8n workflow requirements (webhook-only)
+## 5) Notion register schema + idempotency
 
-- Trigger is **Webhook (Production URL)** only.
-- No Schedule Trigger (no periodic “check” runs).
-- First node after Webhook:
-  - verify header `x-worker-token` equals `N8N_SHARED_SECRET`
-  - if mismatch → Respond 403
-- Second: Notion idempotency:
-  - query Meeting Register where `drive_file_id == {{$json.fileId}}`
-  - if exists → Respond 200 `{ "status": "duplicate_ignored" }`
-  - else → continue pipeline (create/update Notion, call Make, etc.)
+### Role of Notion
+Notion is **not** a trigger. It is the register:
+- status tracking
+- clickable links to artifacts
+- manual correction point (participants/title) if needed
+- error visibility
 
-Reference workflow export: `WF-DRIVE-PUSH_intake.json`.
+### Database: “Meeting Register”
+Recommended properties:
+- `drive_file_id` (Text) — primary idempotency key
+- `drive_file_name` (Text)
+- `drive_file_url` (URL)
+- `status` (Select): NEW / TRANSCRIBING / TRANSCRIBED / MINUTES_READY / EMAIL_DRAFTED / DONE / ERROR
+- `recording_created_at` (Date)
+- `transcript_doc_url` (URL)
+- `minutes_doc_url` (URL)
+- `email_draft_url_or_id` (Text/URL)
+- `participants` (Text) — optional
+- `error_message` (Text)
+- `run_id` (Text)
+
+### Idempotency rule (mandatory)
+n8n must query Notion by `drive_file_id` before processing:
+- exists with DONE → skip
+- exists with PROCESSING/TRANSCRIBING → skip or controlled retry
+- not exists → create row and proceed
+
+Worker may also dedupe pings, but **Notion check is the final gate**.
 
 ---
 
+## 6) Make scenario responsibilities
 
+### Make trigger
+- Custom Webhook (instant) from n8n
 
-**Repo hygiene note**
-- The n8n export file (`integrations/n8n/WF-DRIVE-PUSH_intake.json`) currently contains a literal value for `N8N_SHARED_SECRET` inside an IF node. Replace it with a placeholder before committing.
-## 7) Acceptance criteria (E tests)
+### Make responsibilities
+Input from n8n should include:
+- `notion_page_id`
+- `drive_file_url`
+- `transcript_text` or `transcript_doc_url`
+- `meeting_title` (from filename or Notion)
+- `run_id`
 
-1) Upload a new file into the intake folder → **exactly 1** n8n execution starts.
-2) Non-folder Drive activity → **0** n8n executions.
-3) Duplicate push pings → no duplicate n8n runs (Worker dedupe and/or Notion idempotency).
-4) Watch renewals happen without any n8n executions.
+Steps:
+1) Generate minutes content from transcript (LLM prompt)
+2) Create a Google Doc for minutes
+3) Create Gmail draft (or send)
+4) Update Notion page with minutes link, draft id/link, DONE/ERROR
 
 ---
 
-## 8) Known constraint / pause mode
+## 7) Security and privacy notes (exercise-level)
 
-When n8n execution quota is exhausted, pause ingestion to avoid **missing files**:
-- Worker continues receiving pings; if it advances `pageToken` while n8n rejects, you lose events.
-- Use the documented pause procedure (see Runbook).
+- Drive folder restricted sharing only.
+- Store Google OAuth refresh token and API keys only in secrets/credentials (Worker secrets, n8n credentials, Make connections).
+- Do not commit transcripts/minutes/emails to GitHub.
+- Keep raw recording in Drive only.
 
+---
+
+## 8) Failure modes + runbook pointers (updated)
+
+### Common failure modes
+- Watch channel expired → no pings arrive (fix: Worker renew)
+- Token invalid → `changes.list` fails (fix: Worker resync from startPageToken)
+- Duplicate pings → Worker dedupe + Notion idempotency
+- Drive permissions / download failure
+- OpenAI transcription errors
+- Make webhook unavailable
+- Worker cannot refresh OAuth token (fix: re-authorize and update refresh token secret)
+
+### Runbook pointers
+- Worker KV should show current `expiration` and `pageToken`
+- If no events for long time: verify watch still valid and Worker endpoint reachable
+- If missed events after state loss: reinitialize token and document limitation
+
+---
+
+## 9) Project artifacts and storage plan (unchanged)
+
+### 9.1 Google Drive (operational artifacts)
+Root: `PMI_GenAI_MeetingMinutes/`
+- `00_intake/` — raw recordings (drop here)
+- `01_transcripts/` — transcript Google Docs
+- `02_minutes/` — meeting minutes Google Docs
+- `03_email_exports/` — optional exports
+- `_system/` — optional state snapshots (no secrets)
+
+Naming:
+- `YYYY-MM-DD__<meeting-slug>__recording.ext`
+- `YYYY-MM-DD__<meeting-slug>__transcript.gdoc`
+- `YYYY-MM-DD__<meeting-slug>__minutes.gdoc`
+
+### 9.2 GitHub (versioned project artifacts, no data)
+- `docs/` (this document, runbook, prompts)
+- `workflows/` (`n8n/`, `make/`)
+- `schemas/` (Notion db properties)
+- `samples/` (redacted payloads)
+
+### 9.3 Notion (ops register)
+Database: `Meeting Register` (statuses + links + traceability)
+
+---
+
+## References
+- Google Drive Push Notifications: https://developers.google.com/workspace/drive/api/guides/push
+- Drive Changes (list/watch): https://developers.google.com/workspace/drive/api/reference/rest/v3/changes
+- n8n Webhook node: https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/
+- Make webhooks: https://help.make.com/webhooks
+- Notion database query: https://developers.notion.com/reference/post-database-query
+
+## Watch renewal (Cloudflare Cron)
+
+- Add **one** Cron trigger on the Worker (no n8n schedule).
+- Recommended schedule for demo: `*/15 * * * *` (every 15 minutes).
+- Renewal logic must **not** thrash:
+  - renew only when `expirationMs` is close (<= 20 minutes)
+  - on any (re)watch (`/drive/setup` or renewal), reset `lastMessageNumber` to `null` to avoid `duplicate_message_number` lockout.
+
+**Consistency checks**
+- In KV `drive_watch_state`, `channelId` should stay stable most of the time (only changes on renew).
+- After an upload: `pageToken` changes and `recentEmitted` grows.
+
+## Refresh token stability
+
+- If your Google OAuth consent screen is **External + Testing**, Google may revoke refresh tokens after ~7 days.
+- For demo: acceptable; mitigation is to regenerate and replace `GOOGLE_REFRESH_TOKEN` in Worker secrets.
+- To reduce manual renewals: switch the consent screen publishing status to **In production** for your project (still a private demo app).

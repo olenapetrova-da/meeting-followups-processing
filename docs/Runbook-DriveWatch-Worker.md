@@ -73,3 +73,21 @@ For GitHub traceability, store these artifacts in the repo:
 3) **KV state export** (copy the JSON value of `drive_watch_state` into a local file for backup; do NOT commit secrets)
 
 Use the included template: `docs/Cloudflare-Config-Snapshot.md`.
+
+## Watch renewal (Cloudflare Cron)
+
+- Add **one** Cron trigger on the Worker (no n8n schedule).
+- Recommended schedule for demo: `*/15 * * * *` (every 15 minutes).
+- Renewal logic must **not** thrash:
+  - renew only when `expirationMs` is close (<= 20 minutes)
+  - on any (re)watch (`/drive/setup` or renewal), reset `lastMessageNumber` to `null` to avoid `duplicate_message_number` lockout.
+
+**Consistency checks**
+- In KV `drive_watch_state`, `channelId` should stay stable most of the time (only changes on renew).
+- After an upload: `pageToken` changes and `recentEmitted` grows.
+
+## Refresh token stability
+
+- If your Google OAuth consent screen is **External + Testing**, Google may revoke refresh tokens after ~7 days.
+- For demo: acceptable; mitigation is to regenerate and replace `GOOGLE_REFRESH_TOKEN` in Worker secrets.
+- To reduce manual renewals: switch the consent screen publishing status to **In production** for your project (still a private demo app).
