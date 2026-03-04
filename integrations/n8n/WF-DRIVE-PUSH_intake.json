@@ -11,430 +11,16 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        -288,
-        1168
+        -300,
+        300
       ],
-      "id": "599fef76-b2a2-4c3b-860c-46ade1030517",
+      "id": "webhook_prod",
       "name": "Production URL",
       "webhookId": "f20c33d1-0166-4d04-919b-e541bbac2430",
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "content": "## Branch 1: Register/Renew channel (Schedule or Manual)"
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -672,
-        16
-      ],
-      "typeVersion": 1,
-      "id": "4d241742-141d-45b2-865c-73972cb47a06",
-      "name": "Sticky Note"
-    },
-    {
-      "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\nconst intakeFolderId = $node[\"Config\"]?.json?.INTAKE_FOLDER_ID ?? null;\nconst startPageToken = $node[\"Drive \u2014 Get startPageToken\"]?.json?.startPageToken ?? null;\n\nif (!intakeFolderId) {\n  throw new Error('Missing INTAKE_FOLDER_ID (set it in the Config node).');\n}\nif (!startPageToken) {\n  throw new Error('Missing startPageToken (check the \"Drive \u2014 Get startPageToken\" node output/name).');\n}\n\nconst channelId = $json.id ?? null;\nconst resourceId = $json.resourceId ?? null;\nconst channelToken = $json.token ?? null;\nconst expirationMs = $json.expiration ? Number($json.expiration) : null;\nconst existingPageToken = staticData.driveWatch?.pageToken ?? null;\n\nif (!channelId || !resourceId) {\n  throw new Error('Watch response missing id/resourceId. Check your changes.watch node output.');\n}\n\nstaticData.driveWatch = {\n  folderId: intakeFolderId,\n  pageToken: existingPageToken ?? startPageToken,\n  channelId,\n  resourceId,\n  channelToken,\n  expirationMs,\n  resourceUri: $json.resourceUri ?? null,\n  updatedAtMs: Date.now(),\n};\n\nreturn [{ json: staticData.driveWatch }];\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1024,
-        32
-      ],
-      "id": "52a03c9e-8b8e-4ef5-9c73-fbec9980f485",
-      "name": "Persist \u2014 Drive watch state",
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "jsCode": "function uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\nconst channelId = uuidv4();\nconst expirationMs = Date.now() + 6 * 24 * 60 * 60 * 1000;\n\nreturn [{\n  json: {\n    channelId,\n    expirationMs,\n    channelToken: 'meeting-followups',\n  },\n}];\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        336,
-        32
-      ],
-      "id": "312b6981-ef1c-41a0-a0a9-4be7a24b1785",
-      "name": "Prepare \u2014 Channel params",
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "url": "=https://www.googleapis.com/drive/v3/changes/startPageToken",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleDriveOAuth2Api",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        128,
-        32
-      ],
-      "id": "19184e6b-8022-4355-a19a-99426143263f",
-      "name": "Drive \u2014 Get startPageToken",
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "TlJOLpjAhflj6pCW",
-          "name": "Google Drive account"
-        }
-      },
-      "disabled": true,
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "f1c4d223-cea1-4bce-8f7c-6f22c901acb7",
-              "name": "INTAKE_FOLDER_ID",
-              "value": "1tBji5XdYzKyXrTfhenNkmYPdmlQ2M6Jq",
-              "type": "string"
-            },
-            {
-              "id": "4ebf0cec-3eb8-41f4-8a51-56213e204311",
-              "name": "DRIVE_FOLDER_ID",
-              "value": "1vASvUC199-yKGTzpMPbvDAxRbGurIU4v",
-              "type": "string"
-            },
-            {
-              "id": "0ca6c5f0-0e26-4bc4-9edd-621bfe43cd4f",
-              "name": "TRANSCRIPT_FOLDER_ID",
-              "value": "1ynuk44Atlea3jpJfxVK0yLIl80qozNJ_",
-              "type": "string"
-            },
-            {
-              "id": "be9d28c1-4d81-4117-8954-609c429dcb58",
-              "name": "MINUTES_FOLDER_ID",
-              "value": "1EabDhz0l5AC1IQIw9G5PN1fgUEYFnx0z",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        -64,
-        32
-      ],
-      "id": "d1e5a68c-08c9-42ca-91dc-ee79696a2143",
-      "name": "Config",
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/changes/watch",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleDriveOAuth2Api",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "pageToken",
-              "value": "={{ $('Drive \u2014 Get startPageToken').item.json.startPageToken }}"
-            }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "id",
-              "value": "={{ $json.channelId }}"
-            },
-            {
-              "name": "type",
-              "value": "web_hook"
-            },
-            {
-              "name": "address",
-              "value": "https://olenap.app.n8n.cloud/webhook/f20c33d1-0166-4d04-919b-e541bbac2430"
-            },
-            {
-              "name": "token",
-              "value": "={{ $json.channelToken }}"
-            },
-            {
-              "name": "expiration",
-              "value": "={{ $json.expirationMs }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        768,
-        32
-      ],
-      "id": "c44dae9d-5a0e-406c-8fe0-0bf83894cbb7",
-      "name": "POST changes.watch",
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "TlJOLpjAhflj6pCW",
-          "name": "Google Drive account"
-        }
-      },
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "jsCode": "// This ensures the next nodes operate on the stored values (not pinned data).\nconst staticData = $getWorkflowStaticData('global');\nreturn [{ json: staticData.driveWatch ?? {} }];\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1280,
-        32
-      ],
-      "id": "127841ba-93ec-41c9-b0c3-50897bc9d6db",
-      "name": "Load \u2014 Drive watch state",
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "bc1a7e93-6c40-4853-adbc-046acaec35dc",
-              "leftValue": "={{ !$json.channelId || !$json.resourceId || !$json.expirationMs || ($json.expirationMs - Date.now()) < 48*60*60*1000 }}\n\n",
-              "rightValue": 172800000,
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "or"
-        },
-        "looseTypeValidation": true,
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        1552,
-        32
-      ],
-      "id": "07e484b7-a7d7-4f6d-97fb-f576707bddf7",
-      "name": "Needs renewal?",
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/channels/stop",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleDriveOAuth2Api",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "id",
-              "value": "={{$json.channelId}}"
-            },
-            {
-              "name": "resourceId",
-              "value": "={{$json.resourceId}}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        1856,
-        16
-      ],
-      "id": "c2e03bd9-7d68-4b8a-a2a2-9657586f37ec",
-      "name": "Drive \u2014 Stop channel",
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "TlJOLpjAhflj6pCW",
-          "name": "Google Drive account"
-        }
-      },
-      "disabled": true,
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "function uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\nreturn [{\n  json: {\n    channelId: uuidv4(),\n    expirationMs: Date.now() + 6 * 24 * 60 * 60 * 1000, // 6 days\n    channelToken: 'meeting-followups'\n  }\n}];\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2096,
-        16
-      ],
-      "id": "85193d22-aa41-44ad-b9d2-21155bf1f61a",
-      "name": "Prepare \u2014 Channel params (renew)",
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/changes/watch",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleDriveOAuth2Api",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "pageToken",
-              "value": "={{$node[\"Load \u2014 Drive watch state\"].json.pageToken}}"
-            }
-          ]
-        },
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "id",
-              "value": "={{$node[\"Prepare \u2014 Channel params (renew)\"].json.channelId}}"
-            },
-            {
-              "name": "type",
-              "value": "web_hook"
-            },
-            {
-              "name": "address",
-              "value": "https://olenap.app.n8n.cloud/webhook/f20c33d1-0166-4d04-919b-e541bbac2430"
-            },
-            {
-              "name": "token",
-              "value": "={{$node[\"Prepare \u2014 Channel params (renew)\"].json.channelToken}}"
-            },
-            {
-              "name": "expiration",
-              "value": "={{$node[\"Prepare \u2014 Channel params (renew)\"].json.expirationMs}}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        2304,
-        16
-      ],
-      "id": "73e4aea9-7037-44f3-8ddd-7000e8af4490",
-      "name": "Drive \u2014 Create watch (renew)",
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "TlJOLpjAhflj6pCW",
-          "name": "Google Drive account"
-        }
-      },
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\nconst intakeFolderId = $node[\"Config\"]?.json?.INTAKE_FOLDER_ID ?? null;\nconst startPageToken = $node[\"Drive \u2014 Get startPageToken\"]?.json?.startPageToken ?? null;\n\nif (!intakeFolderId) {\n  throw new Error('Missing INTAKE_FOLDER_ID (set it in the Config node).');\n}\nif (!startPageToken) {\n  throw new Error('Missing startPageToken (check the \"Drive \u2014 Get startPageToken\" node output/name).');\n}\n\nconst channelId = $json.id ?? null;\nconst resourceId = $json.resourceId ?? null;\nconst channelToken = $json.token ?? null;\nconst expirationMs = $json.expiration ? Number($json.expiration) : null;\nconst existingPageToken = staticData.driveWatch?.pageToken ?? null;\n\nif (!channelId || !resourceId) {\n  throw new Error('Watch response missing id/resourceId. Check your changes.watch node output.');\n}\n\nstaticData.driveWatch = {\n  folderId: intakeFolderId,\n  pageToken: existingPageToken ?? startPageToken,\n  channelId,\n  resourceId,\n  channelToken,\n  expirationMs,\n  resourceUri: $json.resourceUri ?? null,\n  updatedAtMs: Date.now(),\n};\n\nreturn [{ json: staticData.driveWatch }];\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2560,
-        16
-      ],
-      "id": "1d729dd8-2119-493b-bd91-c75d5c550945",
-      "name": "Persist \u2014 Drive watch state (renew)",
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst w = staticData.driveWatch ?? {};\n\nconst h = $node[\"Production URL\"]?.json?.headers ?? {};\nconst gotChannelId = h['x-goog-channel-id'] ?? null;\nconst gotResourceId = h['x-goog-resource-id'] ?? null;\nconst gotToken = h['x-goog-channel-token'] ?? null;\nconst resourceState = h['x-goog-resource-state'] ?? null;\n\n\n\n// ignore sync\nif (resourceState === 'sync') {\n  return [{ json: { ok: true, skip: true, reason: 'sync' } }];\n}\n\n// if we don't have state yet, report it (do not stop anything)\nif (!w.channelId || !w.pageToken) {\n  return [{ json: { ok: false, reason: 'no_watch_state', resourceState } }];\n}\n\n// token check (optional)\nif (w.channelToken && gotToken !== w.channelToken) {\n  return [{ json: { ok: false, reason: 'token_mismatch', resourceState } }];\n}\n\n// mismatch: ask to stop the caller channel\nif (gotChannelId && gotChannelId !== w.channelId) {\n  return [{\n    json: {\n      ok: false,\n      reason: 'channel_mismatch',\n      skip: true,\n      shouldStop: true,\n      stopChannelId: gotChannelId,\n      stopResourceId: gotResourceId,\n      expectedChannelId: w.channelId,\n      resourceState\n    }\n  }];\n}\n\n// match: proceed\nreturn [{ json: { ok: true, skip: false, pageToken: w.pageToken } }];\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1136,
-        1184
-      ],
-      "id": "d1d550c2-2ac0-4e87-b11d-147e1e60395e",
-      "name": "Validate \u2014 Drive notification"
-    },
-    {
-      "parameters": {
-        "url": "https://www.googleapis.com/drive/v3/changes",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleDriveOAuth2Api",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "pageToken",
-              "value": "={{$node[\"Validate \u2014 Drive notification\"].json.pageToken}}"
-            },
-            {
-              "name": "fields",
-              "value": "=changes(fileId,removed,file(name,parents,mimeType,trashed,webViewLink)),newStartPageToken,nextPageToken"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        1808,
-        1344
-      ],
-      "id": "5bba1b1a-f531-46b6-a607-87c9a98e2091",
-      "name": "Drive \u2014 changes.list",
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "TlJOLpjAhflj6pCW",
-          "name": "Google Drive account"
-        }
-      }
-    },
-    {
-      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -444,13 +30,13 @@
           },
           "conditions": [
             {
-              "id": "c9597852-aa50-4c38-98aa-4601019f0a00",
-              "leftValue": "={{$json.skip === true || $json.ok === false}}",
-              "rightValue": "",
+              "id": "cond_worker_token",
+              "leftValue": "={{$json.headers[\"x-worker-token\"]}}",
+              "rightValue": "__SET_IN_N8N__",
               "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
               }
             }
           ],
@@ -461,238 +47,28 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1568,
-        1328
+        -40,
+        300
       ],
-      "id": "c8643832-a032-4d5d-a2b6-b45a6365ac38",
-      "name": "Skip?"
+      "id": "if_auth",
+      "name": "Auth: X-Worker-Token == N8N_SHARED_SECRET"
     },
     {
       "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst intakeFolderId = staticData.driveWatch?.folderId;\n\nconst changes = $json.changes ?? [];\nconst newStart = $json.newStartPageToken ?? null;\n\n// Advance token ASAP (so you don\u2019t reprocess the same changes)\nif (newStart) {\n  staticData.driveWatch = staticData.driveWatch ?? {};\n  staticData.driveWatch.pageToken = newStart;\n  staticData.driveWatch.updatedAtMs = Date.now();\n}\n\n// Filter to files in intake folder\nconst out = [];\nfor (const ch of changes) {\n  if (!ch || ch.removed) continue;\n  const f = ch.file;\n  if (!f || f.trashed) continue;\n\n  const parents = f.parents ?? [];\n  if (!parents.includes(intakeFolderId)) continue;\n\n  // Optional: restrict to audio/video\n  const mt = (f.mimeType ?? '').toLowerCase();\n  const okMedia = mt.startsWith('audio/') || mt.startsWith('video/');\n  if (!okMedia) continue;\n\n  out.push({\n    drive_file_id: ch.fileId,\n    drive_file_name: f.name,\n    drive_file_url: f.webViewLink,\n    mimeType: f.mimeType,\n  });\n}\n\nreturn out.map(x => ({ json: x }));\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2032,
-        1344
-      ],
-      "id": "1db1d466-d54e-456f-a7f4-1b0eec14069b",
-      "name": "Filter intake + advance token"
-    },
-    {
-      "parameters": {},
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [
-        -192,
-        -384
-      ],
-      "id": "a5588334-75ef-4d18-921d-e50f81b68252",
-      "name": "When clicking \u2018Execute workflow\u2019"
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "60df1059-275b-439c-b892-d5e6ae3bc913",
-              "name": "channelId",
-              "value": "f0fa131f-c08b-4388-a1bd-07627e200b5f",
-              "type": "string"
-            },
-            {
-              "id": "70019e1a-17de-437a-a49a-85869e509323",
-              "name": "resourceId",
-              "value": "Bi3vzPD_GSCnnc2jn_DZ0wcBiYQ",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        112,
-        -576
-      ],
-      "id": "e55c49d9-1f7c-4872-8569-6161e73c0e02",
-      "name": "Edit Fields",
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/channels/stop",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleDriveOAuth2Api",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "id",
-              "value": "={{$json.channelId}}"
-            },
-            {
-              "name": "resourceId",
-              "value": "={{$json.resourceId}}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        336,
-        -576
-      ],
-      "id": "2c235cf2-0e16-4c1e-a931-e48fc84b9a66",
-      "name": "Drive \u2014 Stop channel1",
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "TlJOLpjAhflj6pCW",
-          "name": "Google Drive account"
+        "respondWith": "json",
+        "responseBody": "{\n  \"error\": \"forbidden\"\n}",
+        "options": {
+          "responseCode": 403
         }
       },
-      "disabled": true,
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\n// If state already exists, do nothing\nif (staticData.driveWatch?.channelId && staticData.driveWatch?.pageToken) {\n  return [{ json: staticData.driveWatch }];\n}\n\n// Read headers from webhook trigger\nconst h = $json.headers ?? {};\n\nconst channelId = h['x-goog-channel-id'] ?? null;\nconst resourceId = h['x-goog-resource-id'] ?? null;\nconst channelToken = h['x-goog-channel-token'] ?? null;\nconst resourceUri = h['x-goog-resource-uri'] ?? null;\n\n// Extract pageToken from resourceUri (?pageToken=...)\nlet pageToken = null;\nif (resourceUri) {\n  const m = resourceUri.match(/[?&]pageToken=([^&]+)/);\n  if (m) pageToken = decodeURIComponent(m[1]);\n}\n\n// Parse expiration header to ms\nconst expHeader = h['x-goog-channel-expiration'] ?? null;\nconst expirationMs = expHeader ? Date.parse(expHeader) : null;\n\n// Intake folder from Config node\nconst intakeFolderId = \"1tBji5XdYzKyXrTfhenNkmYPdmlQ2M6Jq\";\n\nif (!channelId || !resourceId || !pageToken || !intakeFolderId) {\n  return [{\n    json: {\n      ok: false,\n      reason: 'bootstrap_failed',\n      channelId,\n      resourceId,\n      pageToken,\n      intakeFolderId\n    }\n  }];\n}\n\n// Persist\nstaticData.driveWatch = {\n  folderId: intakeFolderId,\n  pageToken,\n  channelId,\n  resourceId,\n  channelToken,\n  expirationMs,\n  resourceUri,\n  updatedAtMs: Date.now(),\n  bootstrap: true\n};\n\nreturn [{ json: staticData.driveWatch }];\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
       "position": [
-        944,
-        1184
+        220,
+        460
       ],
-      "id": "e711f434-f12c-441a-ae64-f3fc600487bc",
-      "name": "Bootstrap \u2014 Drive watch state"
-    },
-    {
-      "parameters": {
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nreturn [{ json: staticData.driveWatch ?? {} }];\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        16,
-        -384
-      ],
-      "id": "740eb5a3-b105-4a38-b421-8d82d3534141",
-      "name": "Debug \u2014 Show driveWatch"
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "f2a07b3c-1688-4894-8d6a-c12ea7bf6188",
-              "leftValue": "={{ $json.shouldStop === true }}",
-              "rightValue": "",
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        1344,
-        1184
-      ],
-      "id": "993ad605-51d6-4a64-9562-379c6a39500a",
-      "name": "Stop unknown channel?"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://www.googleapis.com/drive/v3/channels/stop",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleDriveOAuth2Api",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "id",
-              "value": "={{$json.stopChannelId}}"
-            },
-            {
-              "name": "resourceId",
-              "value": "={{$json.stopResourceId}}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        1552,
-        1088
-      ],
-      "id": "955be424-ad1d-4cd5-a6c2-effe7d7c6937",
-      "name": "Drive \u2014 Stop unknown channel",
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "TlJOLpjAhflj6pCW",
-          "name": "Google Drive account"
-        }
-      },
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "triggerAtHour": 6
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.3,
-      "position": [
-        -288,
-        32
-      ],
-      "id": "1a8034cf-1c7a-4480-b08b-ba619d45915a",
-      "name": "Schedule Trigger",
-      "disabled": true
+      "id": "resp_forbidden",
+      "name": "Respond 403 forbidden"
     },
     {
       "parameters": {
@@ -712,7 +88,7 @@
             {
               "key": "drive_file_id|rich_text",
               "condition": "equals",
-              "richTextValue": "={{$json.fileId}}"
+              "richTextValue": "={{$node[\"Production URL\"].json.body.fileId}}"
             }
           ]
         },
@@ -721,11 +97,12 @@
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2.2,
       "position": [
-        336,
-        1056
+        220,
+        300
       ],
-      "id": "58053a1c-dbf8-455a-a911-f188c2263153",
-      "name": "Notion",
+      "id": "notion_search",
+      "name": "Notion search",
+      "alwaysOutputData": true,
       "credentials": {
         "notionApi": {
           "id": "yhAScpXnLQ8P5MKC",
@@ -744,46 +121,13 @@
           },
           "conditions": [
             {
-              "id": "2b7c0422-fd81-43af-9aec-6067364dac92",
-              "leftValue": "={{$items(\"Notion\").length}}",
-              "rightValue": 0,
-              "operator": {
-                "type": "number",
-                "operation": "gt"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        544,
-        1056
-      ],
-      "id": "59e0f3d2-abf4-483d-894a-0dcc391ebee2",
-      "name": "if search returned any results"
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "c73eec31-8322-4cdf-a7a7-8c6f12142690",
-              "leftValue": "={{$json.headers[\"x-worker-token\"]}}",
-              "rightValue": "__SET_IN_N8N__",
+              "id": "cond_found",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
               "operator": {
                 "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
+                "operation": "notEmpty",
+                "singleValue": true
               }
             }
           ],
@@ -794,45 +138,91 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        16,
-        1168
+        480,
+        300
       ],
-      "id": "b3c98dc6-f2b5-4479-9047-ec78a9e66bac",
-      "name": "X-Worker-Token equals N8N_SHARED_SECRET"
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "{\n  \"error\": \"forbidden\"\n}",
-        "options": {
-          "responseCode": 403
-        }
-      },
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.5,
-      "position": [
-        320,
-        1344
-      ],
-      "id": "a7e9e352-6f40-4fdf-8176-c5f5705baf63",
-      "name": "error\": \"forbidden\""
+      "id": "if_found",
+      "name": "Idempotency: record exists?"
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "{\n  \"status\": \"duplicate_ignored\"\n}",
         "options": {
-          "responseCode": "={{ 200 }}"
+          "responseCode": 200
         }
       },
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        752,
-        960
+        740,
+        200
       ],
-      "id": "0feaea3e-48a2-4db9-9b4b-d6383514b0e9",
-      "name": "status\": \"duplicate_ignored\""
+      "id": "resp_dup",
+      "name": "Respond 200 duplicate_ignored"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "30594a8e-2162-803b-ab4d-cd4214ca0ff7",
+          "mode": "list",
+          "cachedResultName": "Meeting Register",
+          "cachedResultUrl": "https://www.notion.so/30594a8e2162803bab4dcd4214ca0ff7"
+        },
+        "simple": false,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Name|title",
+              "title": "={{ $node[\"Production URL\"].json.body.name ? $node[\"Production URL\"].json.body.name : $node[\"Production URL\"].json.body.fileId }}"
+            },
+            {
+              "key": "drive_file_id|rich_text",
+              "textContent": "={{$node[\"Production URL\"].json.body.fileId}}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        740,
+        400
+      ],
+      "id": "notion_create",
+      "name": "Notion create intake record",
+      "credentials": {
+        "notionApi": {
+          "id": "yhAScpXnLQ8P5MKC",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"new_file_accepted\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1000,
+        400
+      ],
+      "id": "resp_new",
+      "name": "Respond 200 new_file_accepted"
     }
   ],
   "pinData": {},
@@ -841,266 +231,65 @@
       "main": [
         [
           {
-            "node": "X-Worker-Token equals N8N_SHARED_SECRET",
+            "node": "Auth: X-Worker-Token == N8N_SHARED_SECRET",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare \u2014 Channel params": {
+    "Auth: X-Worker-Token == N8N_SHARED_SECRET": {
       "main": [
         [
           {
-            "node": "POST changes.watch",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Drive \u2014 Get startPageToken": {
-      "main": [
-        [
-          {
-            "node": "Prepare \u2014 Channel params",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Config": {
-      "main": [
-        [
-          {
-            "node": "Drive \u2014 Get startPageToken",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "POST changes.watch": {
-      "main": [
-        [
-          {
-            "node": "Persist \u2014 Drive watch state",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Persist \u2014 Drive watch state": {
-      "main": [
-        [
-          {
-            "node": "Load \u2014 Drive watch state",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Load \u2014 Drive watch state": {
-      "main": [
-        [
-          {
-            "node": "Needs renewal?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Needs renewal?": {
-      "main": [
-        [
-          {
-            "node": "Drive \u2014 Stop channel",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        []
-      ]
-    },
-    "Drive \u2014 Stop channel": {
-      "main": [
-        [
-          {
-            "node": "Prepare \u2014 Channel params (renew)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare \u2014 Channel params (renew)": {
-      "main": [
-        [
-          {
-            "node": "Drive \u2014 Create watch (renew)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Drive \u2014 Create watch (renew)": {
-      "main": [
-        [
-          {
-            "node": "Persist \u2014 Drive watch state (renew)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Validate \u2014 Drive notification": {
-      "main": [
-        [
-          {
-            "node": "Stop unknown channel?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Drive \u2014 changes.list": {
-      "main": [
-        [
-          {
-            "node": "Filter intake + advance token",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Skip?": {
-      "main": [
-        [],
-        [
-          {
-            "node": "Drive \u2014 changes.list",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "When clicking \u2018Execute workflow\u2019": {
-      "main": [
-        [
-          {
-            "node": "Debug \u2014 Show driveWatch",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Edit Fields": {
-      "main": [
-        [
-          {
-            "node": "Drive \u2014 Stop channel1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Bootstrap \u2014 Drive watch state": {
-      "main": [
-        [
-          {
-            "node": "Validate \u2014 Drive notification",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Stop unknown channel?": {
-      "main": [
-        [
-          {
-            "node": "Drive \u2014 Stop unknown channel",
+            "node": "Notion search",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Skip?",
+            "node": "Respond 403 forbidden",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Drive \u2014 Stop unknown channel": {
-      "main": [
-        []
-      ]
-    },
-    "Schedule Trigger": {
+    "Notion search": {
       "main": [
         [
           {
-            "node": "Config",
+            "node": "Idempotency: record exists?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Notion": {
+    "Idempotency: record exists?": {
       "main": [
         [
           {
-            "node": "if search returned any results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "if search returned any results": {
-      "main": [
-        [
-          {
-            "node": "status\": \"duplicate_ignored\"",
+            "node": "Respond 200 duplicate_ignored",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Bootstrap \u2014 Drive watch state",
+            "node": "Notion create intake record",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "X-Worker-Token equals N8N_SHARED_SECRET": {
+    "Notion create intake record": {
       "main": [
         [
           {
-            "node": "Notion",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "error\": \"forbidden\"",
+            "node": "Respond 200 new_file_accepted",
             "type": "main",
             "index": 0
           }
@@ -1118,6 +307,5 @@
     "templateCredsSetupCompleted": true,
     "instanceId": "e9831d5794dbfbbfe37e8a55340f672d15c48d6c06ed0066f5da51930bb91cf7"
   },
-  "id": "114K4cdna7AggWJ2fUMdW",
-  "tags": []
+  "id": "114K4cdna7AggWJ2fUMdW"
 }
