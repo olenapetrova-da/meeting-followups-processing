@@ -1,0 +1,456 @@
+{
+  "name": "MEET-PROCESSING_transcribe",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "d4e8f2a1-7b3c-4d5e-9f0a-1b2c3d4e5f6a",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "ca174dde-1684-44f8-812b-77b9c107ed5d",
+      "name": "Trigger: called by intake workflow",
+      "webhookId": "d4e8f2a1-7b3c-4d5e-9f0a-1b2c3d4e5f6a",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $json.body.notion_page_id }}",
+          "mode": "id"
+        },
+        "simple": false,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "status|select",
+              "selectValue": "TRANSCRIBING"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        272,
+        0
+      ],
+      "id": "f12685c5-1fbb-4ef7-9ee1-a5405ef0a5f6",
+      "name": "Notion: status → TRANSCRIBING",
+      "credentials": {
+        "notionApi": {
+          "id": "yhAScpXnLQ8P5MKC",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Trigger: called by intake workflow').item.json.body.fileId }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        528,
+        0
+      ],
+      "id": "9cca7ffc-8232-4736-acb7-1a6d91f52cc8",
+      "name": "Drive: download recording",
+      "credentials": {
+        "googleApi": {
+          "id": "br7QtTE9l39wj0gy",
+          "name": "Google Service Account account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "driveId": "sharedWithMe",
+        "folderId": "1ynuk44Atlea3jpJfxVK0yLIl80qozNJ_",
+        "title": "={{ $('Trigger: called by intake workflow').item.json.body.meetingSlug ?? $('Trigger: called by intake workflow').item.json.body.name }} transcript"
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -224
+      ],
+      "id": "3a666dc4-9296-4348-b5c5-17119a30a375",
+      "name": "Docs: create transcript Google Doc",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "br7QtTE9l39wj0gy",
+          "name": "Google Service Account account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $('Trigger: called by intake workflow').item.json.body.notion_page_id }}",
+          "mode": "id"
+        },
+        "simple": false,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "status|select",
+              "selectValue": "TRANSCRIBED"
+            },
+            {
+              "key": "transcript_doc_url|url",
+              "urlValue": "={{ $json.webViewLink }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        0
+      ],
+      "id": "0f12d3e9-515d-4a6b-ba0e-6f3d1171d967",
+      "name": "Notion: status → TRANSCRIBED + transcript URL",
+      "credentials": {
+        "notionApi": {
+          "id": "yhAScpXnLQ8P5MKC",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hook.eu2.make.com/PLACEHOLDER_SET_WHEN_MAKE_IS_BUILT",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-intake-event",
+              "value": "n8n.transcript_ready.v1"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "notion_page_id",
+              "value": "={{ $('Trigger: called by intake workflow').item.json.body.notion_page_id }}"
+            },
+            {
+              "name": "drive_file_url",
+              "value": "={{ $('Trigger: called by intake workflow').item.json.body.webViewLink }}"
+            },
+            {
+              "name": "transcript_text",
+              "value": "={{ $('Transcribe a recording').item.json.text }}"
+            },
+            {
+              "name": "transcript_doc_url",
+              "value": "={{ $('Docs: create transcript Google Doc').item.json.webViewLink }}"
+            },
+            {
+              "name": "meeting_title",
+              "value": "={{ $('Trigger: called by intake workflow').item.json.body.name }}"
+            },
+            {
+              "name": "run_id",
+              "value": "={{ $('Trigger: called by intake workflow').item.json.body.dedupeKey }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1776,
+        0
+      ],
+      "id": "6ddf284d-2584-4094-a417-6e311569b673",
+      "name": "HTTP: POST to Make webhook",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $('Trigger: called by intake workflow').item.json.body.notion_page_id }}",
+          "mode": "id"
+        },
+        "simple": false,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "status|select",
+              "selectValue": "MINUTES_READY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        2032,
+        0
+      ],
+      "id": "33b5a123-2ec7-4422-b279-df55b09b22c9",
+      "name": "Notion: status → MINUTES_READY",
+      "credentials": {
+        "notionApi": {
+          "id": "yhAScpXnLQ8P5MKC",
+          "name": "Notion account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $('Trigger: called by intake workflow').item.json.body.notion_page_id }}",
+          "mode": "id"
+        },
+        "simple": false,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "status|select",
+              "selectValue": "ERROR"
+            },
+            {
+              "key": "error_message|rich_text",
+              "textContent": "={{ $json.message ?? 'Unknown error in processing workflow' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        448
+      ],
+      "id": "1b516d0d-f710-463b-9aed-c8466f9b5f9b",
+      "name": "Notion: status → ERROR",
+      "credentials": {
+        "notionApi": {
+          "id": "yhAScpXnLQ8P5MKC",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        784,
+        0
+      ],
+      "id": "44d7e6aa-3377-4387-8845-deca91560fa2",
+      "name": "Transcribe a recording",
+      "credentials": {
+        "openAiApi": {
+          "id": "heOxnyxKARpwSlPk",
+          "name": "OpenAI account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "<WEB_APP_URL_FROM_ENV>",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "<SHARED_SECRET_FROM_ENV>"
+            },
+            {
+              "name": "title",
+              "value": "={{ $('Trigger: called by intake workflow').item.json.body.meetingSlug ?? $('Trigger: called by intake workflow').item.json.body.name }} transcript"
+            },
+            {
+              "name": "content",
+              "value": "={{ $('Transcribe a recording').item.json.text }}"
+            },
+            {
+              "name": "folderId",
+              "value": "1ynuk44Atlea3jpJfxVK0yLIl80qozNJ_"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1072,
+        0
+      ],
+      "id": "98d06368-c920-4312-9650-8f598019df8b",
+      "name": "HTTP Request",
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Trigger: called by intake workflow": {
+      "main": [
+        [
+          {
+            "node": "Notion: status → TRANSCRIBING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: status → TRANSCRIBING": {
+      "main": [
+        [
+          {
+            "node": "Drive: download recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docs: create transcript Google Doc": {
+      "main": [
+        [],
+        []
+      ]
+    },
+    "Notion: status → TRANSCRIBED + transcript URL": {
+      "main": [
+        [
+          {
+            "node": "HTTP: POST to Make webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: POST to Make webhook": {
+      "main": [
+        [
+          {
+            "node": "Notion: status → MINUTES_READY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive: download recording": {
+      "main": [
+        [
+          {
+            "node": "Transcribe a recording",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion: status → ERROR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe a recording": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion: status → ERROR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Notion: status → TRANSCRIBED + transcript URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion: status → ERROR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "9822d362-a8ad-464c-a83f-f82f8c528b96",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e9831d5794dbfbbfe37e8a55340f672d15c48d6c06ed0066f5da51930bb91cf7"
+  },
+  "id": "1KJNCqHTGzf7SAaJ",
+  "tags": []
+}
