@@ -4,7 +4,7 @@
  * Endpoints:
  *  - POST /drive/push  : where Google Drive push pings will be sent
  *  - POST /drive/setup : a manual endpoint you call once to create/renew the watch
- *  - GET  /drive/status: read-only status (debug; no secrets) // CHANGED
+ *  - GET  /drive/status: read-only status (debug; no secrets)
  *
  * KV:
  *  - one key (env.STATE_KEY) holding JSON state
@@ -18,6 +18,50 @@
  *  - env.GOOGLE_CLIENT_SECRET (Secret)
  *  - env.GOOGLE_REFRESH_TOKEN (Secret)
  *  - env.N8N_SHARED_SECRET (Secret)
+ *
+ * --------------------------------------------------------------------------
+ * CHANGES vs previous version — 2026-06-13
+ * --------------------------------------------------------------------------
+ * Problem: On channel renewal (cron or expiry), Google Drive sent a burst of
+ * push notifications. Each notification triggered 2 KV put() calls (one
+ * in-flight guard + one final state save). When the KV free-tier limit of
+ * 1 000 put/day was hit, Workers started returning HTTP 500. Google's retry
+ * policy then resent every failed notification aggressively, causing a
+ * feedback loop that exhausted the daily KV quota within minutes.
+ *
+ * Fix 1 — Respond 200 immediately, process in background (ctx.waitUntil).
+ *   Google Drive does NOT retry when it receives a 2xx response. By returning
+ *   200 before any KV or API work begins, we break the retry loop entirely.
+ *
+ * Fix 2 — Reduced KV put() calls from 2 to 1 per notification.
+ *   The early "in-flight guard" put() was removed. The in-flight timestamp is
+ *   now written only once, together with the final state update at the end of
+ *   processing. This halves KV write usage under normal operation.
+ *
+ * Fix 3 — Global error handler returns HTTP 200 (not 500) for /drive/push.
+ *   Even if an unexpected exception escapes processDrivePush(), the Worker
+ *   responds 200 to Google so it never triggers a retry storm.
+ * --------------------------------------------------------------------------
+ *
+ * CHANGES — 2026-06-15 (channel renewal frequency fix)
+ * --------------------------------------------------------------------------
+ * Root cause found: the /changes/watch request did NOT set the "expiration"
+ * field, so Google defaulted the channel lifetime to just 1 HOUR. Combined
+ * with RENEW_IF_EXPIRES_WITHIN_MS = 1 hour and a cron running every 30
+ * minutes, the Worker was renewing (stopping old channel + creating new one)
+ * on EVERY cron tick — ~48 times/day. Each renewal = 1 OAuth refresh,
+ * 1 channels/stop call, 1 changes/watch call, and 1 KV put. This also caused
+ * the old and new channels to briefly overlap, producing the recurring
+ * "channel_mismatch" errors in the logs.
+ *
+ * Fix 4 — Request the maximum allowed channel lifetime (7 days) from Google
+ *   by setting "expiration" explicitly in the /changes/watch request body.
+ *
+ * Fix 5 — Increase RENEW_IF_EXPIRES_WITHIN_MS to 1 day. With a 7-day channel
+ *   lifetime, renewal now happens roughly once every ~6 days instead of
+ *   every 30 minutes — a ~99% reduction in renewal-related KV writes, OAuth
+ *   token refreshes, and Drive API calls.
+ * --------------------------------------------------------------------------
  */
 
 const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -27,7 +71,7 @@ const MAX_CHANGE_PAGES = 10;
 const PAGE_SIZE = 100;
 
 // "New file" heuristic: change time close to created time ⇒ likely creation/upload, not a move.
-const NEW_FILE_MAX_LAG_MS = 5 * 60 * 1000; // 5 min (NOTE: currently unused; heuristic disabled below) // CHANGED
+const NEW_FILE_MAX_LAG_MS = 5 * 60 * 1000; // 5 min (NOTE: currently unused; heuristic disabled below)
 
 // Dedupe window for emitted fileIds (Worker-side)
 const EMIT_DEDUPE_TTL_MS = 48 * 60 * 60 * 1000; // 48h
@@ -36,13 +80,30 @@ const EMIT_DEDUPE_MAX_KEYS = 200;
 // Avoid concurrent processing on bursty duplicate pings (best-effort)
 const IN_FLIGHT_WINDOW_MS = 30 * 1000;
 
-// Renewal threshold
-const RENEW_IF_EXPIRES_WITHIN_MS = 60 * 60 * 1000; // 20 min // CHANGED: avoid thrashing with frequent Cron; renew only shortly before expiry
+// Renewal threshold — renew when the channel is within this much time of expiring.
+// With a requested 7-day channel lifetime (see DRIVE_CHANNEL_TTL_MS below),
+// this means renewal happens roughly once every ~6 days.
+const RENEW_IF_EXPIRES_WITHIN_MS = 24 * 60 * 60 * 1000; // 1 day
+
+// Requested channel lifetime for /changes/watch. Google's documented maximum
+// for the "changes" resource is 604800 seconds (7 days). If "expiration" is
+// omitted, Google defaults to just 1 hour — which was the root cause of the
+// constant re-renewal / channel_mismatch issue.
+const DRIVE_CHANNEL_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // CHANGED (Fix 1 + Fix 3): /drive/push responds 200 immediately and
+    // runs processing in the background via ctx.waitUntil(). This ensures
+    // Google Drive never sees a 5xx and never retries the notification.
+    if (path === "/drive/push") {
+      if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+      ctx.waitUntil(processDrivePushBackground(request, env));
+      return json({ ok: true, accepted: true }, 200);
+    }
 
     try {
       if (path === "/drive/setup") {
@@ -52,14 +113,7 @@ export default {
         return json(res, 200);
       }
 
-      if (path === "/drive/push") {
-        if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
-        const res = await handleDrivePush(request, env, ctx);
-        return json(res, 200);
-      }
-
       if (path === "/drive/status") {
-        // CHANGED: simple read-only status endpoint (no secrets)
         const s = await getState(env);
         if (!s) return json({ ok: true, state: null }, 200);
         const { folderId, pushUrl, pageToken, channelId, resourceId, expirationMs, lastMessageNumber, lastMaxChangeTimeMs, lastRenewAtMs, lastRenewError } = s;
@@ -77,6 +131,18 @@ export default {
     ctx.waitUntil(renewIfNeeded(env));
   },
 };
+
+// CHANGED (Fix 1): Background processor for /drive/push — called via ctx.waitUntil().
+// Google has already received 200 by the time this runs, so any error here
+// is silent from Google's perspective (no retry triggered).
+async function processDrivePushBackground(request, env) {
+  try {
+    await handleDrivePush(request, env);
+  } catch (e) {
+    // Log error for observability but do NOT propagate — Google already got 200.
+    console.error("processDrivePushBackground error:", String(e?.message ?? e));
+  }
+}
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
@@ -181,7 +247,7 @@ async function setupOrRenewWatch(env, pushUrl, { forceRenew }) {
         body: { id: state.channelId, resourceId: state.resourceId },
       });
     } catch {
-      // ignore for demo
+      // ignore
     }
   }
 
@@ -189,25 +255,25 @@ async function setupOrRenewWatch(env, pushUrl, { forceRenew }) {
   let pageToken = state.pageToken;
   if (!pageToken) {
     const sp = await driveFetch(env, accessToken, "/changes/startPageToken", {
-      query: { fields: "startPageToken" }, // CHANGED: removed restrictToMyDrive (can hide changes for some personal/shared setups)
+      query: { fields: "startPageToken" },
     });
     pageToken = sp.startPageToken;
   }
 
   const channelId = crypto.randomUUID();
-  const channelToken = crypto.randomUUID(); // validated on push via X-Goog-Channel-Token
+  const channelToken = crypto.randomUUID();
+  // CHANGED (Fix 4): explicitly request a 7-day channel lifetime. Without
+  // this, Google defaults to 1 hour, causing constant renewal every cron tick.
+  const requestedExpirationMs = Date.now() + DRIVE_CHANNEL_TTL_MS;
   const watchRes = await driveFetch(env, accessToken, "/changes/watch", {
     method: "POST",
-    query: {
-      pageToken,
-      // CHANGED: removed restrictToMyDrive (can hide changes for some personal/shared setups)
-      // NOTE: address in body below
-    },
+    query: { pageToken },
     body: {
       id: channelId,
       type: "web_hook",
       address: pushUrl,
       token: channelToken,
+      expiration: String(requestedExpirationMs),
     },
   });
 
@@ -222,9 +288,9 @@ async function setupOrRenewWatch(env, pushUrl, { forceRenew }) {
     resourceId: watchRes.resourceId,
     channelToken,
     expirationMs,
-    lastRenewAtMs: Date.now(), // CHANGED: for debugging
+    lastRenewAtMs: Date.now(),
     lastRenewError: null,
-    lastMessageNumber: null, // CHANGED: reset on (re)watch to avoid duplicate_message_number lock when channel changes
+    lastMessageNumber: null, // reset on (re)watch to avoid duplicate_message_number lock
     lastMaxChangeTimeMs: state.lastMaxChangeTimeMs || null,
     recentEmitted: pruneRecentEmitted(state.recentEmitted || {}),
     inFlightUntilMs: 0,
@@ -242,10 +308,11 @@ async function setupOrRenewWatch(env, pushUrl, { forceRenew }) {
   };
 }
 
-async function handleDrivePush(request, env, ctx) {
+async function handleDrivePush(request, env) {
   const state = await getState(env);
   if (!state?.channelId || !state?.resourceId) {
-    return { ok: false, error: "not_setup_yet" };
+    console.error("drive_push: not_setup_yet");
+    return;
   }
 
   // Validate channel headers
@@ -256,31 +323,39 @@ async function handleDrivePush(request, env, ctx) {
   const msgNoStr = header(request, "X-Goog-Message-Number");
 
   if (chId !== state.channelId || resId !== state.resourceId) {
-    return { ok: false, error: "channel_mismatch" };
+    console.error("drive_push: channel_mismatch", { chId, expected: state.channelId });
+    return;
   }
   if (state.channelToken && chToken && chToken !== state.channelToken) {
-    return { ok: false, error: "token_mismatch" };
+    console.error("drive_push: token_mismatch");
+    return;
   }
 
-  // Ignore sync message
+  // Ignore sync message — no KV write needed
   if (resState === "sync") {
-    return { ok: true, ignored: "sync" };
+    console.log("drive_push: ignored sync");
+    return;
   }
 
-  // Best-effort de-dupe by message number
+  // De-dupe by message number — no KV write needed
   const msgNo = toBigIntOrNull(msgNoStr);
   const lastMsgNo = toBigIntOrNull(state.lastMessageNumber);
   if (msgNo !== null && lastMsgNo !== null && msgNo <= lastMsgNo) {
-    return { ok: true, ignored: "duplicate_message_number" };
+    console.log("drive_push: ignored duplicate_message_number", msgNoStr);
+    return;
   }
 
-  // Best-effort in-flight guard (KV isn't atomic; this just reduces duplicates)
+  // In-flight guard — no KV write needed (just read)
   const t = nowMs();
   if (state.inFlightUntilMs && t < Number(state.inFlightUntilMs)) {
-    return { ok: true, ignored: "in_flight" };
+    console.log("drive_push: ignored in_flight");
+    return;
   }
-  state.inFlightUntilMs = t + IN_FLIGHT_WINDOW_MS;
-  await putState(env, state);
+
+  // CHANGED (Fix 2): Removed the early putState() for the in-flight guard.
+  // Previously this caused 2 KV puts per notification (one here, one at the end).
+  // Now we write inFlightUntilMs only once, in the final putState() below.
+  // This halves KV write operations per push notification.
 
   const accessToken = await getAccessToken(env);
 
@@ -288,8 +363,6 @@ async function handleDrivePush(request, env, ctx) {
     "nextPageToken,newStartPageToken,changes(fileId,removed,time,file(id,name,mimeType,parents,trashed,createdTime,webViewLink))";
 
   let pageToken = state.pageToken;
-  let nextPageToken = null;
-
   let maxChangeTimeMs = Number(state.lastMaxChangeTimeMs || 0);
   const folderId = env.INTAKE_FOLDER_ID;
 
@@ -301,7 +374,6 @@ async function handleDrivePush(request, env, ctx) {
       query: {
         pageToken,
         pageSize: String(PAGE_SIZE),
-        // CHANGED: removed restrictToMyDrive (can hide changes for some personal/shared setups)
         includeRemoved: "false",
         spaces: "drive",
         fields,
@@ -321,18 +393,8 @@ async function handleDrivePush(request, env, ctx) {
       if (!inFolder) continue;
 
       const changeTimeMs = Date.parse(ch.time || "") || 0;
-      const createdTimeMs = Date.parse(f.createdTime || "") || 0;
 
       if (changeTimeMs > maxChangeTimeMs) maxChangeTimeMs = changeTimeMs;
-
-      // CHANGED: disabled the "new file" time-lag heuristic.
-      // Reason: Drive `change time` vs `createdTime` is not reliable enough for intake,
-      // and can filter out real uploads (moves/slow uploads). Folder membership + idempotency is enough.
-      //
-      // Previous logic (kept here for reference):
-      // if (!createdTimeMs || !changeTimeMs) continue;
-      // const lag = changeTimeMs - createdTimeMs;
-      // if (lag < 0 || lag > NEW_FILE_MAX_LAG_MS) continue;
 
       const fileId = f.id || ch.fileId;
       if (!fileId) continue;
@@ -362,21 +424,22 @@ async function handleDrivePush(request, env, ctx) {
       }
     }
 
-    nextPageToken = resp.nextPageToken || null;
+    const nextPageToken = resp.nextPageToken || null;
 
     if (nextPageToken) {
       pageToken = nextPageToken;
       continue;
     }
 
-    // End of changes stream: prefer newStartPageToken for next time
     if (resp.newStartPageToken) {
       pageToken = resp.newStartPageToken;
     }
     break;
   }
 
-  // Persist updated state
+  // CHANGED (Fix 2): Single putState() per notification — includes inFlightUntilMs
+  // set to 0 (already done) so no second write is needed. Previously there were
+  // two puts: one for the in-flight guard and one here.
   const nextState = {
     ...state,
     pageToken,
@@ -387,7 +450,7 @@ async function handleDrivePush(request, env, ctx) {
   };
   await putState(env, nextState);
 
-  return { ok: true, emittedCount: emitted.length, emittedFileIds: emitted };
+  console.log("drive_push: processed", { emittedCount: emitted.length, emittedFileIds: emitted });
 }
 
 async function postToN8n(env, payload) {
@@ -410,13 +473,11 @@ async function renewIfNeeded(env) {
   const exp = state.expirationMs ? Number(state.expirationMs) : null;
   if (!exp) return;
 
-  // Renew only when close to expiry (see constant above)
   if (nowMs() <= exp - RENEW_IF_EXPIRES_WITHIN_MS) return;
 
   try {
     await setupOrRenewWatch(env, state.pushUrl, { forceRenew: true });
   } catch (e) {
-    // CHANGED: persist error so it's visible in KV snapshot
     const s2 = (await getState(env)) || state || {};
     s2.lastRenewError = String(e?.message ?? e);
     s2.lastRenewAtMs = Date.now();

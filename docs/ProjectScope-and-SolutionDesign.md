@@ -18,6 +18,7 @@ PMI course exercise: convert a meeting **recording** into a **meeting minutes em
 - **Google Drive Push Notifications + Changes API** — event trigger (push pings + delta fetch)
 - **Cloudflare Worker (Free) + KV (Free)** — **filter gate + state** (pageToken + channel data), so n8n is called only on true events
 - **n8n (Starter)** — backend worker for transcription/orchestration (runs only on true events)
+- **Google Apps Script web app (`PMI-drive-actions`)** — creates new Drive/Docs files as the user. n8n's Google Service Account credential can read/download but has **zero Drive storage quota**, so it cannot create files (see ADR-001 in `docs/ADR.md`)
 - **Make (Free)** — minutes formatting + email drafting/sending
 - **Notion (Free)** — register/dashboard (“SharePoint List analogue”). Write-only in automation chain.
 
@@ -83,7 +84,8 @@ When a new recording file appears in a specific Drive folder:
   | - idempotency check (Notion by file_id)   |
   | - download file from Drive                |
   | - OpenAI transcription                    |
-  | - save transcript doc (Drive)             |
+  | - save transcript doc (via Apps Script -->|
+  |   see "PMI-drive-actions" below)          |
   | - update Notion status/links              |
   +-------------------------------------------+
             |
@@ -250,13 +252,30 @@ Naming:
 - `YYYY-MM-DD__<meeting-slug>__minutes.gdoc`
 
 ### 9.2 GitHub (versioned project artifacts, no data)
-- `docs/` (this document, runbook, prompts)
-- `workflows/` (`n8n/`, `make/`)
+- `docs/` (this document, ADR, runbook, prompts)
+- `integrations/` (`n8n/`, `apps-script/`, `make/`)
 - `schemas/` (Notion db properties)
 - `samples/` (redacted payloads)
 
 ### 9.3 Notion (ops register)
 Database: `Meeting Register` (statuses + links + traceability)
+
+---
+
+## 10) Implementation status (as of 2026-06-10)
+
+### Built and deployed
+- Cloudflare Worker `pmi-drive-watch` — gate + KV state + Cron renewal (`*/15 * * * *`)
+- n8n `MEET-DRIVE-PUSH_intake` — webhook auth, Notion idempotency check, creates Meeting Register row
+- n8n `MEET-PROCESSING_transcribe` — downloads recording, transcribes via OpenAI Whisper, creates transcript Doc via the `PMI-drive-actions` Apps Script web app, updates Notion status/links
+- Apps Script web app `PMI-drive-actions` — `doPost` creates a Doc as the user and moves it into the target Drive folder (see ADR-001)
+- Notion "Meeting Register" database
+
+### Not yet built
+- `HTTP: POST to Make webhook` node exists in `MEET-PROCESSING_transcribe` but is **disabled** (placeholder URL) — waiting on the Make scenario
+- Make scenario: generate minutes from transcript (LLM) — in progress
+- Make scenario: create minutes Google Doc, create Gmail draft, update Notion to DONE
+- End-to-end pipeline test (Drive drop → email draft)
 
 ---
 
