@@ -82,30 +82,6 @@
     },
     {
       "parameters": {
-        "authentication": "serviceAccount",
-        "driveId": "sharedWithMe",
-        "folderId": "1ynuk44Atlea3jpJfxVK0yLIl80qozNJ_",
-        "title": "={{ $('Trigger: called by intake workflow').item.json.body.meetingSlug ?? $('Trigger: called by intake workflow').item.json.body.name }} transcript"
-      },
-      "type": "n8n-nodes-base.googleDocs",
-      "typeVersion": 2,
-      "position": [
-        1344,
-        -224
-      ],
-      "id": "3a666dc4-9296-4348-b5c5-17119a30a375",
-      "name": "Docs: create transcript Google Doc",
-      "alwaysOutputData": true,
-      "credentials": {
-        "googleApi": {
-          "id": "br7QtTE9l39wj0gy",
-          "name": "Google Service Account account"
-        }
-      },
-      "disabled": true
-    },
-    {
-      "parameters": {
         "resource": "databasePage",
         "operation": "update",
         "pageId": {
@@ -146,9 +122,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://hook.eu2.make.com/PLACEHOLDER_SET_WHEN_MAKE_IS_BUILT",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "url": "https://hook.eu2.make.com/3ryqpiu6q4fjbg7bqgjf5nvsmiigy6k9",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -175,7 +149,7 @@
             },
             {
               "name": "transcript_doc_url",
-              "value": "={{ $('Docs: create transcript Google Doc').item.json.webViewLink }}"
+              "value": "={{ $('HTTP Request').item.json.webViewLink }}"
             },
             {
               "name": "meeting_title",
@@ -196,8 +170,7 @@
         0
       ],
       "id": "6ddf284d-2584-4094-a417-6e311569b673",
-      "name": "HTTP: POST to Make webhook",
-      "disabled": true
+      "name": "HTTP: POST to Make webhook"
     },
     {
       "parameters": {
@@ -232,8 +205,7 @@
           "id": "yhAScpXnLQ8P5MKC",
           "name": "Notion account"
         }
-      },
-      "disabled": true
+      }
     },
     {
       "parameters": {
@@ -262,7 +234,7 @@
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2.2,
       "position": [
-        1248,
+        1456,
         448
       ],
       "id": "1b516d0d-f710-463b-9aed-c8466f9b5f9b",
@@ -326,7 +298,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1072,
+        1152,
         0
       ],
       "id": "98d06368-c920-4312-9650-8f598019df8b",
@@ -356,12 +328,6 @@
             "index": 0
           }
         ]
-      ]
-    },
-    "Docs: create transcript Google Doc": {
-      "main": [
-        [],
-        []
       ]
     },
     "Notion: status → TRANSCRIBED + transcript URL": {
@@ -446,11 +412,12 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "9822d362-a8ad-464c-a83f-f82f8c528b96",
+  "versionId": "4e316d33-cec4-497f-b328-8b1a34babfa1",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "e9831d5794dbfbbfe37e8a55340f672d15c48d6c06ed0066f5da51930bb91cf7"
   },
+  "nodeGroups": [],
   "id": "1KJNCqHTGzf7SAaJ",
   "tags": []
 }
