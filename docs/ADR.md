@@ -21,6 +21,6 @@ Create files (transcript Doc, and later the minutes Doc) via a small **Google Ap
 n8n calls this web app via an `HTTP Request` node (`WEB_APP_URL` + `SHARED_SECRET` from `.env`), instead of the native `n8n-nodes-base.googleDocs` node.
 
 **Consequences:**
-- The old `Docs: create transcript Google Doc` node (Service Account, `googleDocs`) is kept in the workflow JSON but `disabled: true`, for reference.
+- The old `Docs: create transcript Google Doc` node (Service Account, `googleDocs`) was initially kept in the workflow JSON as `disabled: true` for reference. It was removed on 2026-06-17 once the Apps Script pattern was established and tested — the disabled node served no further purpose.
 - Any future "create a new file" step (e.g., the minutes Doc in the Make/Stage 3 scenario, if done via n8n) must use the same Apps Script pattern, not the Service Account credential.
 - New required env vars: `WEB_APP_URL`, `SHARED_SECRET` (added to `.env` and `.env.example`).
