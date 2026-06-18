@@ -279,6 +279,36 @@ Database: `Meeting Register` (statuses + links + traceability)
 
 ---
 
+## 11) Configuration reference
+
+For each configurable behaviour: current setup, where else in this document or in ADR it is mentioned, and exactly where to make the change.
+
+---
+
+### 11.1 Supported intake file formats
+
+**Current:** No MIME type filter exists anywhere in the pipeline. Any file dropped in the intake folder triggers the full chain. Transcription succeeds for formats natively supported by OpenAI Whisper: `mp3, mp4, mpeg, mpga, m4a, wav, webm`. `.m4a` and `.mp4` are both handled correctly without any configuration. Files exceeding **25 MB** will fail at the Whisper step with an API error; n8n will write `ERROR` to Notion.
+
+**Related:** §3 (Trigger strategy — Worker filters only by folder, not by file type). §8 (Failure modes — "OpenAI transcription errors").
+
+**To add a MIME type guard (block non-audio/video files early):** Edit the Cloudflare Worker (`cloudflare/worker/pmi-drive-watch.js`), in the block that confirms a new file before calling n8n. Add a check on `file.mimeType` — accept only values starting with `audio/` or `video/`. Files that don't match should return HTTP 200 silently (no n8n call, no Notion row created).
+
+**To handle files larger than 25 MB:** Add a file-size check before the `Transcribe a recording` node in n8n. Options: set Notion status to `ERROR` with a descriptive message, or compress/split the file upstream (requires additional tooling not currently in scope).
+
+---
+
+### 11.2 Output language of meeting minutes
+
+**Current:** Whisper auto-detects the recording language — no `language` parameter is set on the `Transcribe a recording` node. GPT-4o-mini (Make module 5) generates minutes in the same language as the transcript, because no output language is specified in the prompt. English, Polish, and Ukrainian recordings are all processed correctly without any configuration change.
+
+**Related:** §6 (Make scenario responsibilities — LLM prompt step). §2 (Architecture diagram — Whisper transcription step).
+
+**To fix the output language of minutes (e.g., always English regardless of recording language):** Open the Google Doc used as the LLM prompt (fetched by Make module 8, doc ID `13sNLMo3tZAzdU_O7aTXzNCR3TBjMZJKz7JRxajBVzEY`). Add an instruction such as `Always respond in English.` to the prompt text. No changes to n8n or Make are needed — the doc is fetched live at runtime.
+
+**To hint Whisper to a specific language (slightly improves transcription accuracy when all recordings are in one language):** In n8n, open the `Transcribe a recording` node → set the `Language` field to the ISO 639-1 code: `en` (English), `pl` (Polish), `uk` (Ukrainian). Leave it empty to keep auto-detection for mixed-language use.
+
+---
+
 ## References
 - Google Drive Push Notifications: https://developers.google.com/workspace/drive/api/guides/push
 - Drive Changes (list/watch): https://developers.google.com/workspace/drive/api/reference/rest/v3/changes
