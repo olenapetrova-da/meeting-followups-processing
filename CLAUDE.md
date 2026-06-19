@@ -21,6 +21,7 @@
 ## Stack reminder
 - Cloudflare Worker: deployed via dashboard, no Wrangler
 - n8n: Starter plan, executions are critical — minimise them
-- Supabase: free tier
-- AI extraction: OpenAI GPT-4o-mini (no Claude API budget)
+- Make: Free plan
+- Notion: Free plan — Meeting Register DB ID `30594a8e-2162-803b-ab4d-cd4214ca0ff7`
+- AI: OpenAI Whisper (transcription) + GPT-4o-mini via Make (minutes)
 - n8n Google Service Account credential (`Google Service Account account`): read-only in practice — Drive download, Notion etc. work, but it has **zero Drive storage quota**, so it cannot create new Drive/Docs files (`storageQuotaExceeded`). For any "create a new file" step, use the `PMI-drive-actions` Apps Script web app (`integrations/apps-script/PMI-drive-actions.gs`, URL/secret in `.env` as `WEB_APP_URL`/`SHARED_SECRET`) — see `docs/ADR.md` ADR-001.
